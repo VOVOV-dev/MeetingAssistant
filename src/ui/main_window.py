@@ -30,7 +30,7 @@ class WorkerThread(QThread):
             # Step 2: ASR
             asr_svc = DashScopeASRService(Config.DASHSCOPE_API_KEY)
             self.progress.emit("连接语音识别服务...")
-            raw_text = asr_svc.recognize(audio_path, callback=self._emit_progress)
+            raw_text = asr_svc.recognize(audio_path, progress_callback=self._emit_progress)
             
             self.progress.emit("语音识别完成。")
             

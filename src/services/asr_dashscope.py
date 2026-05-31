@@ -1,7 +1,38 @@
 import dashscope
-import os
-import json
 import time
+
+
+def _extract_uploaded_file_id(upload_response) -> str:
+    """从 DashScope 文件上传响应中提取 file_id。"""
+    uploaded_files = getattr(upload_response, "output", None)
+    if not uploaded_files or not isinstance(uploaded_files, dict):
+        raise Exception(f"文件上传失败: {upload_response}")
+
+    files = uploaded_files.get("uploaded_files", [])
+    if not files:
+        raise Exception(f"文件上传失败，未返回 uploaded_files: {upload_response}")
+
+    file_id = files[0].get("file_id")
+    if not file_id:
+        raise Exception(f"文件上传成功但未找到 file_id: {upload_response}")
+
+    return file_id
+
+
+def _resolve_file_url(file_id: str, api_key: str) -> str:
+    """通过 file_id 获取 DashScope 可访问的临时文件 URL。"""
+    from dashscope import Files
+
+    file_info = Files.get(file_id=file_id, api_key=api_key)
+    if file_info.status_code != 200:
+        raise Exception(f"获取文件信息失败: {file_info}")
+
+    file_output = file_info.output or {}
+    file_url = file_output.get("url")
+    if not file_url:
+        raise Exception(f"文件信息中未找到 url: {file_info}")
+
+    return file_url
 
 class DashScopeASRService:
     def __init__(self, api_key: str):
@@ -14,19 +45,34 @@ class DashScopeASRService:
         返回包含时间戳和角色信息的逐句识别文本
         """
         from dashscope.audio.asr import Transcription
+        from dashscope import Files
         if progress_callback:
             progress_callback("开始上传并提交语音识别任务...")
             
         try:
+            model_name = Transcription.Models.paraformer_mtl_v1
+
+            upload_response = Files.upload(file_path=audio_file_path, purpose="inference", api_key=self.api_key)
+            if upload_response.status_code != 200:
+                raise Exception(f"文件上传失败: {upload_response}")
+
+            file_id = _extract_uploaded_file_id(upload_response)
+            file_url = _resolve_file_url(file_id, self.api_key)
+
             # 提交任务
-            # 模型选择 paraformer-8k-v1 / paraformer-16k-v1 或 paraformer-mtl-v1 (支持说话人)
+            # 使用支持说话人分离的模型，避免模型名不兼容导致提交失败
             task_response = Transcription.async_call(
-                model='paraformer-16k-v1',
-                file_urls=[f"file://{audio_file_path}"],
+                model=model_name,
+                file_urls=[file_url],
                 diarization_enabled=True # 开启说话人角色分离
             )
             
-            task_id = task_response.output.task_id
+            if task_response.status_code != 200:
+                raise Exception(f"语音识别任务提交失败: {task_response}")
+
+            task_id = task_response.get("output", {}).get("task_id")
+            if not task_id:
+                raise Exception(f"语音识别任务未返回 task_id: {task_response}")
             
             if progress_callback:
                 progress_callback(f"任务已提交，Task ID: {task_id}，正在识别中 (这可能需要几分钟)...")
@@ -34,20 +80,23 @@ class DashScopeASRService:
             # 轮询获取结果
             while True:
                 status_response = Transcription.wait(task=task_id)
-                status = status_response.output.task_status
+                if status_response.status_code != 200:
+                    raise Exception(f"语音识别查询失败: {status_response}")
+
+                status = status_response.get("output", {}).get("task_status")
                 if status == 'SUCCEEDED':
                     if progress_callback:
                         progress_callback("识别成功，正在解析结果...")
                     break
                 elif status == 'FAILED':
-                    error_msg = status_response.output.get('task_metrics', {}).get('FAILED', 'Unknown Error')
+                    error_msg = status_response.get('output', {}).get('task_metrics', {}).get('FAILED', 'Unknown Error')
                     raise Exception(f"语音识别失败: {error_msg}")
                 else:
                     # RUNNING or PENDING
                     time.sleep(2)
 
             # 解析结果
-            results = status_response.output.get('results', [])
+            results = status_response.get('output', {}).get('results', [])
             if not results:
                 return "未能识别到任何语音。"
                 

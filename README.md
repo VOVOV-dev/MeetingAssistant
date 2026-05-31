@@ -49,8 +49,10 @@ LLM_MODEL_NAME=模型名称 (默认为使用千问的 qwen-plus)
 ```
 
 ## 使用方法
-1. 在配置好 `.env` 文件且安装好全部依赖的 Python 环境中，通过终端或命令行运行程序启动脚本：
+1. 在配置好 `.venv` 文件且安装好全部依赖的 Python 环境中，通过终端或命令行运行程序启动脚本：
    ```bash
+   Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+   (此处执行./.venv\Scripts\Activate.ps1)
    python main.py
    ```
 2. 在弹出的图形界面中点击 **📂 选择音视频文件** 按钮选取您准备好的会议记录文件。

@@ -1,6 +1,10 @@
 import os
-from moviepy.editor import VideoFileClip
 import uuid
+
+try:
+    from moviepy import VideoFileClip
+except ImportError:
+    from moviepy.editor import VideoFileClip
 
 def extract_audio(file_path: str, temp_dir: str) -> str:
     """
