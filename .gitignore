@@ -3,8 +3,23 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Environment
-.env
+# Virtual environment
+.venv/
+venv/
+env/
 
-# Temp directory used by the application
+# IDE / editor state
+.vscode/
+.idea/
+
+# Environment and local configuration
+.env
+.env.*
+!.env.example
+settings.json
+
+# App output and temporary files
+saves/
 /temp/
+*.log
+
