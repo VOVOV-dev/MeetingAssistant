@@ -1,18 +1,26 @@
 import os
+import glob
 import markdown
+import shutil
+from datetime import datetime
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                             QPushButton, QLabel, QFileDialog, QTextEdit, QSplitter)
+                             QPushButton, QLabel, QFileDialog, QTextEdit, QSplitter,
+                             QListWidget, QListWidgetItem, QMenu, QInputDialog, QMessageBox,
+                             QTabWidget, QStyle, QSlider)
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QUrl
+from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+from PyQt6.QtMultimediaWidgets import QVideoWidget
 
 from src.config import Config
 from src.utils.media import extract_audio
 from src.services.asr_dashscope import DashScopeASRService
 from src.services.llm_openai import LLMService
+from src.ui.settings_dialog import SettingsDialog
 
 class WorkerThread(QThread):
     progress = pyqtSignal(str)
-    finished = pyqtSignal(str)
+    finished = pyqtSignal(str, str) # title, content
     error = pyqtSignal(str)
 
     def __init__(self, file_path):
@@ -40,7 +48,17 @@ class WorkerThread(QThread):
             summary = llm_svc.generate_meeting_minutes(raw_text, progress_callback=self._emit_progress)
             
             self.progress.emit("处理完毕！")
-            self.finished.emit(summary)
+            
+            # Use original file name as default title
+            base_name = os.path.basename(self.file_path)
+            title = os.path.splitext(base_name)[0] + f"_纪要_{datetime.now().strftime('%m%d%H%M')}"
+            
+            # Save to Markdown automatically
+            save_path = os.path.join(Config.get_save_dir(), title + ".md")
+            with open(save_path, 'w', encoding='utf-8') as f:
+                f.write(summary)
+            
+            self.finished.emit(title, summary)
             
         except Exception as e:
             self.error.emit(str(e))
@@ -52,54 +70,182 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("智能会议纪要与总结系统")
-        self.resize(1000, 700)
+        self.resize(1280, 850)
         
         self.selected_file = None
+        self.current_md_path = None
         
         self._init_ui()
+        self.refresh_minutes_list()
         
     def _init_ui(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        main_layout = QVBoxLayout(central_widget)
+        main_layout = QHBoxLayout(central_widget)
+        
+        # --- 左侧侧边栏 (历史会议纪要) ---
+        sidebar_layout = QVBoxLayout()
+        
+        title_layout = QHBoxLayout()
+        title_layout.addWidget(QLabel("<b>历史纪要列表</b>"))
+        btn_settings = QPushButton("⚙️ 设置")
+        btn_settings.clicked.connect(self.open_settings)
+        title_layout.addStretch()
+        title_layout.addWidget(btn_settings)
+        sidebar_layout.addLayout(title_layout)
+        
+        self.list_widget = QListWidget()
+        self.list_widget.itemClicked.connect(self.on_item_clicked)
+        self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.list_widget.customContextMenuRequested.connect(self.show_context_menu)
+        sidebar_layout.addWidget(self.list_widget)
+        
+        # --- 右侧主区域 ---
+        right_layout = QVBoxLayout()
         
         # 顶部工具栏
         toolbar_layout = QHBoxLayout()
         self.btn_select_file = QPushButton("📂 选择音视频文件")
+        self.btn_select_file.setMinimumHeight(40)
         self.btn_select_file.clicked.connect(self.select_file)
         
         self.lbl_file_path = QLabel("未选择文件")
         self.lbl_file_path.setStyleSheet("color: gray;")
         
         self.btn_start = QPushButton("🚀 开始生成纪要")
+        self.btn_start.setMinimumHeight(40)
         self.btn_start.setEnabled(False)
         self.btn_start.clicked.connect(self.start_processing)
         
         toolbar_layout.addWidget(self.btn_select_file)
         toolbar_layout.addWidget(self.lbl_file_path, stretch=1)
         toolbar_layout.addWidget(self.btn_start)
-        main_layout.addLayout(toolbar_layout)
+        right_layout.addLayout(toolbar_layout)
         
-        # 中间的拆分视图 (左侧日志，右侧结果)
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        # 标签页 (会议纪要 / 视频预览)
+        self.tabs = QTabWidget()
         
-        # 日志视图
+        # Tab 1: 纪要与日志
+        tab_summary = QWidget()
+        tab_summary_layout = QVBoxLayout(tab_summary)
+        summary_splitter = QSplitter(Qt.Orientation.Horizontal)
+        
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setPlaceholderText("系统运行日志将展示在这里...")
-        splitter.addWidget(self.log_view)
+        summary_splitter.addWidget(self.log_view)
         
-        # Web渲染视图 (渲染 Markdown 与 Mermaid)
         self.web_view = QWebEngineView()
-        self.web_view.setHtml(self.get_html_template("# 会议纪要\n等待生成..."))
-        splitter.addWidget(self.web_view)
+        self.web_view.setHtml(self.get_html_template("# 会议纪要\n等待生成或在左侧选择历史纪要..."))
+        summary_splitter.addWidget(self.web_view)
         
-        # 调整拆分比例 (1:3)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 3)
+        summary_splitter.setStretchFactor(0, 1)
+        summary_splitter.setStretchFactor(1, 4)
+        tab_summary_layout.addWidget(summary_splitter)
         
-        main_layout.addWidget(splitter, stretch=1)
+        self.tabs.addTab(tab_summary, "📝 总结与纪要")
         
+        # Tab 2: 音视频预览
+        tab_media = QWidget()
+        tab_media_layout = QVBoxLayout(tab_media)
+        
+        self.video_widget = QVideoWidget()
+        self.audio_output = QAudioOutput()
+        self.media_player = QMediaPlayer()
+        self.media_player.setAudioOutput(self.audio_output)
+        self.media_player.setVideoOutput(self.video_widget)
+        
+        media_controls = QHBoxLayout()
+        self.btn_play = QPushButton()
+        self.btn_play.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
+        self.btn_play.clicked.connect(self.toggle_play)
+        
+        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider.setRange(0, 100)
+        self.slider.sliderMoved.connect(self.set_position)
+        
+        self.lbl_time = QLabel("00:00 / 00:00")
+        
+        media_controls.addWidget(self.btn_play)
+        media_controls.addWidget(self.slider)
+        media_controls.addWidget(self.lbl_time)
+        
+        self.media_player.positionChanged.connect(self.position_changed)
+        self.media_player.durationChanged.connect(self.duration_changed)
+        
+        tab_media_layout.addWidget(self.video_widget, stretch=1)
+        tab_media_layout.addLayout(media_controls)
+        
+        self.tabs.addTab(tab_media, "🎬 媒体预览")
+        
+        right_layout.addWidget(self.tabs)
+        
+        # 组装整体布局
+        main_layout.addLayout(sidebar_layout, stretch=1)
+        main_layout.addLayout(right_layout, stretch=4)
+        
+    def open_settings(self):
+        dlg = SettingsDialog(self)
+        if dlg.exec():
+            self.refresh_minutes_list()
+            self.log_message("存储路径已更新。")
+
+    def refresh_minutes_list(self):
+        self.list_widget.clear()
+        save_dir = Config.get_save_dir()
+        md_files = glob.glob(os.path.join(save_dir, "*.md"))
+        md_files.sort(key=os.path.getmtime, reverse=True) # 按修改时间排序
+        
+        for file in md_files:
+            item = QListWidgetItem(os.path.basename(file))
+            item.setData(Qt.ItemDataRole.UserRole, file)
+            self.list_widget.addItem(item)
+            
+    def show_context_menu(self, pos):
+        item = self.list_widget.itemAt(pos)
+        if not item:
+            return
+        
+        menu = QMenu()
+        action_rename = menu.addAction("重命名")
+        action_delete = menu.addAction("删除")
+        
+        action = menu.exec(self.list_widget.mapToGlobal(pos))
+        file_path = item.data(Qt.ItemDataRole.UserRole)
+        
+        if action == action_rename:
+            new_name, ok = QInputDialog.getText(self, "重命名", "输入新文件名:", text=item.text())
+            if ok and new_name:
+                if not new_name.endswith('.md'):
+                    new_name += '.md'
+                new_path = os.path.join(os.path.dirname(file_path), new_name)
+                try:
+                    os.rename(file_path, new_path)
+                    self.refresh_minutes_list()
+                except Exception as e:
+                    QMessageBox.warning(self, "错误", f"重命名失败: {e}")
+                    
+        elif action == action_delete:
+            reply = QMessageBox.question(self, "确认删除", f"确定要删除 {item.text()} 吗？")
+            if reply == QMessageBox.StandardButton.Yes:
+                try:
+                    os.remove(file_path)
+                    self.refresh_minutes_list()
+                    if self.current_md_path == file_path:
+                        self.web_view.setHtml(self.get_html_template("# 会议纪要\n已删除。"))
+                        self.current_md_path = None
+                except Exception as e:
+                    QMessageBox.warning(self, "错误", f"删除失败: {e}")
+
+    def on_item_clicked(self, item):
+        file_path = item.data(Qt.ItemDataRole.UserRole)
+        if os.path.exists(file_path):
+            self.current_md_path = file_path
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            self.web_view.setHtml(self.get_html_template(content))
+            self.tabs.setCurrentIndex(0)
+
     def select_file(self):
         file_path, _ = QFileDialog.getOpenFileName(
             self, 
@@ -114,6 +260,34 @@ class MainWindow(QMainWindow):
             self.btn_start.setEnabled(True)
             self.log_message(f"已选择文件: {file_path}")
             
+            # Load into media player
+            self.media_player.setSource(QUrl.fromLocalFile(file_path))
+            self.media_player.pause()
+            
+    def toggle_play(self):
+        if self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+            self.media_player.pause()
+            self.btn_play.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
+        else:
+            self.media_player.play()
+            self.btn_play.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPause))
+            
+    def position_changed(self, position):
+        self.slider.setValue(position)
+        self.update_time_label()
+
+    def duration_changed(self, duration):
+        self.slider.setRange(0, duration)
+        self.update_time_label()
+
+    def set_position(self, position):
+        self.media_player.setPosition(position)
+
+    def update_time_label(self):
+        pos = self.media_player.position() // 1000
+        dur = self.media_player.duration() // 1000
+        self.lbl_time.setText(f"{pos//60:02d}:{pos%60:02d} / {dur//60:02d}:{dur%60:02d}")
+
     def log_message(self, msg: str):
         self.log_view.append(msg)
         
@@ -121,7 +295,6 @@ class MainWindow(QMainWindow):
         if not self.selected_file:
             return
             
-        # 检查 API Key
         if not Config.DASHSCOPE_API_KEY:
             self.log_message("⚠️ 错误: 请在 .env 文件中设置 DASHSCOPE_API_KEY。")
             return
@@ -130,6 +303,7 @@ class MainWindow(QMainWindow):
         self.btn_select_file.setEnabled(False)
         self.log_view.clear()
         self.log_message("开始处理...")
+        self.tabs.setCurrentIndex(0)
         
         self.worker = WorkerThread(self.selected_file)
         self.worker.progress.connect(self.log_message)
@@ -142,21 +316,16 @@ class MainWindow(QMainWindow):
         self.btn_start.setEnabled(True)
         self.btn_select_file.setEnabled(True)
         
-    def on_finished(self, markdown_text: str):
-        self.log_message("✅ 纪要生成成功，正在渲染 HTML...")
+    def on_finished(self, title: str, markdown_text: str):
+        self.log_message(f"✅ 纪要 '{title}' 生成并保存成功，正在渲染 HTML...")
         html_content = self.get_html_template(markdown_text)
         self.web_view.setHtml(html_content)
         self.btn_start.setEnabled(True)
         self.btn_select_file.setEnabled(True)
+        self.refresh_minutes_list()
         
     def get_html_template(self, markdown_text: str) -> str:
-        """
-        将 markdown 转换为 HTML，并嵌入 Mermaid 所需的前端库和样式。
-        """
-        # 注意: python-markdown 生成 HTML 时需要保留 mermaid 代码块原样
         html_body = markdown.markdown(markdown_text, extensions=['fenced_code', 'tables'])
-        
-        # 为了让 mermaid 初始化起效，我们将 `<code class="language-mermaid">` 替换为 `<div class="mermaid">`
         html_body = html_body.replace('<pre><code class="language-mermaid">', '<div class="mermaid">')
         html_body = html_body.replace('</code></pre>', '</div>')
 
@@ -177,7 +346,6 @@ class MainWindow(QMainWindow):
                 th, td {{ border: 1px solid #dfe2e5; padding: 6px 13px; }}
                 th {{ background-color: #f6f8fa; }}
             </style>
-            <!-- 引入 Mermaid -->
             <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
             <script>
                 mermaid.initialize({{ startOnLoad: true }});
