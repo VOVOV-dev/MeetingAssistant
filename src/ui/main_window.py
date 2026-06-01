@@ -1,7 +1,6 @@
 import os
 import glob
 import markdown
-import shutil
 from datetime import datetime
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QLabel, QFileDialog, QTextEdit, QSplitter,
@@ -74,6 +73,11 @@ class MainWindow(QMainWindow):
         
         self.selected_file = None
         self.current_md_path = None
+        self.media_available = False
+        self.media_error = ""
+        self.media_player = None
+        self.audio_output = None
+        self.video_widget = None
         
         self._init_ui()
         self.refresh_minutes_list()
@@ -148,13 +152,7 @@ class MainWindow(QMainWindow):
         # Tab 2: 音视频预览
         tab_media = QWidget()
         tab_media_layout = QVBoxLayout(tab_media)
-        
-        self.video_widget = QVideoWidget()
-        self.audio_output = QAudioOutput()
-        self.media_player = QMediaPlayer()
-        self.media_player.setAudioOutput(self.audio_output)
-        self.media_player.setVideoOutput(self.video_widget)
-        
+
         media_controls = QHBoxLayout()
         self.btn_play = QPushButton()
         self.btn_play.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
@@ -169,11 +167,8 @@ class MainWindow(QMainWindow):
         media_controls.addWidget(self.btn_play)
         media_controls.addWidget(self.slider)
         media_controls.addWidget(self.lbl_time)
-        
-        self.media_player.positionChanged.connect(self.position_changed)
-        self.media_player.durationChanged.connect(self.duration_changed)
-        
-        tab_media_layout.addWidget(self.video_widget, stretch=1)
+
+        self._init_media_backend(tab_media_layout)
         tab_media_layout.addLayout(media_controls)
         
         self.tabs.addTab(tab_media, "🎬 媒体预览")
@@ -183,6 +178,38 @@ class MainWindow(QMainWindow):
         # 组装整体布局
         main_layout.addLayout(sidebar_layout, stretch=1)
         main_layout.addLayout(right_layout, stretch=4)
+
+    def _init_media_backend(self, tab_media_layout: QVBoxLayout):
+        try:
+            self.video_widget = QVideoWidget()
+            self.audio_output = QAudioOutput()
+            self.media_player = QMediaPlayer()
+            self.media_player.setAudioOutput(self.audio_output)
+            self.media_player.setVideoOutput(self.video_widget)
+
+            if hasattr(self.media_player, "isAvailable") and not self.media_player.isAvailable():
+                raise RuntimeError("QtMultimedia backend not available")
+
+            self.media_player.positionChanged.connect(self.position_changed)
+            self.media_player.durationChanged.connect(self.duration_changed)
+            tab_media_layout.addWidget(self.video_widget, stretch=1)
+            self.media_available = True
+            self.btn_play.setEnabled(True)
+            self.slider.setEnabled(True)
+        except Exception as e:
+            self.media_available = False
+            self.media_error = str(e)
+            tip = QLabel(
+                "当前环境缺少 QtMultimedia 播放后端，媒体预览已禁用。\n"
+                "请在虚拟环境中执行：\n"
+                "pip install --upgrade --force-reinstall PyQt6 PyQt6-Qt6 PyQt6-WebEngine PyQt6-WebEngine-Qt6"
+            )
+            tip.setWordWrap(True)
+            tip.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            tab_media_layout.addWidget(tip, stretch=1)
+            self.btn_play.setEnabled(False)
+            self.slider.setEnabled(False)
+            self.lbl_time.setText("后端不可用")
         
     def open_settings(self):
         dlg = SettingsDialog(self)
@@ -260,11 +287,17 @@ class MainWindow(QMainWindow):
             self.btn_start.setEnabled(True)
             self.log_message(f"已选择文件: {file_path}")
             
-            # Load into media player
-            self.media_player.setSource(QUrl.fromLocalFile(file_path))
-            self.media_player.pause()
+            if self.media_available and self.media_player is not None:
+                # Load into media player
+                self.media_player.setSource(QUrl.fromLocalFile(file_path))
+                self.media_player.pause()
+            else:
+                self.log_message("提示: 当前 QtMultimedia 后端不可用，媒体预览已禁用。")
             
     def toggle_play(self):
+        if not self.media_available or self.media_player is None:
+            return
+
         if self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self.media_player.pause()
             self.btn_play.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
@@ -273,17 +306,25 @@ class MainWindow(QMainWindow):
             self.btn_play.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPause))
             
     def position_changed(self, position):
+        if not self.media_available:
+            return
         self.slider.setValue(position)
         self.update_time_label()
 
     def duration_changed(self, duration):
+        if not self.media_available:
+            return
         self.slider.setRange(0, duration)
         self.update_time_label()
 
     def set_position(self, position):
+        if not self.media_available or self.media_player is None:
+            return
         self.media_player.setPosition(position)
 
     def update_time_label(self):
+        if not self.media_available or self.media_player is None:
+            return
         pos = self.media_player.position() // 1000
         dur = self.media_player.duration() // 1000
         self.lbl_time.setText(f"{pos//60:02d}:{pos%60:02d} / {dur//60:02d}:{dur%60:02d}")

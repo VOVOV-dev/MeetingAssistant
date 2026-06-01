@@ -59,3 +59,19 @@ LLM_MODEL_NAME=模型名称 (默认为使用千问的 qwen-plus)
 3. 点击 **🚀 开始生成纪要**。
 4. 程序将静默运行提取任务，并将各阶段的状态进度输出在界面**左侧的运行日志区**。
 5. （请耐心等待语音转写（最耗时）与大模型生成结束），完毕后，右侧的预览区将**自动呈现出一份包含流程图的详细 Markdown 会议纪要**报告。
+
+## 常见问题
+
+### 1) 视频预览报错：No QtMultimedia backends found
+如果你看到如下日志：
+- `No QtMultimedia backends found...`
+- `Failed to create QVideoSink "Not available"`
+- `Failed to initialize QMediaPlayer "Not available"`
+
+这代表当前 Python 环境里的 Qt 多媒体后端不完整。请在项目虚拟环境中执行：
+
+```bash
+pip install --upgrade --force-reinstall PyQt6 PyQt6-Qt6 PyQt6-WebEngine PyQt6-WebEngine-Qt6
+```
+
+安装后重启程序。若仍失败，可先继续使用纪要生成功能（媒体预览会自动降级禁用，不影响转写与总结）。
