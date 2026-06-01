@@ -23,3 +23,11 @@ saves/
 /temp/
 *.log
 
+# PyInstaller build outputs
+build/
+dist/
+*.spec
+release/build/
+release/dist/
+release/spec/
+

@@ -75,3 +75,36 @@ pip install --upgrade --force-reinstall PyQt6 PyQt6-Qt6 PyQt6-WebEngine PyQt6-We
 ```
 
 安装后重启程序。若仍失败，可先继续使用纪要生成功能（媒体预览会自动降级禁用，不影响转写与总结）。
+
+## 打包发布
+
+如果你希望把程序打包成在没有 Python 环境的 Windows 电脑上直接运行的版本，推荐使用 PyInstaller。
+
+### 1. 准备打包环境
+先在当前虚拟环境里安装打包工具：
+
+```bash
+pip install pyinstaller
+```
+
+### 2. 执行打包脚本
+项目根目录已经提供了 `build.ps1`：
+
+```powershell
+.\build.ps1
+```
+
+如果你更想要单个 exe 文件，也可以：
+
+```powershell
+.\build.ps1 -OneFile
+```
+
+打包完成后，结果会在 `dist/MeetingAssistant/` 或 `dist/MeetingAssistant.exe` 中。
+
+### 3. 分发注意事项
+你需要把下面这些内容一起带给使用者：
+- 打包出来的程序文件
+- 同目录下的 `.env` 文件（里面放 `DASHSCOPE_API_KEY`、`LLM_API_KEY` 等）
+
+程序已经改成从 exe 同目录读取 `.env`，所以用户不需要安装 Python，只要把 exe 和 `.env` 放在一起即可。
