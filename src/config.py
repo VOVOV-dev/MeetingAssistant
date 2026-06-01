@@ -2,6 +2,7 @@ import os
 import json
 import sys
 from dotenv import load_dotenv
+from datetime import datetime
 
 def get_app_base_dir() -> str:
     if getattr(sys, "frozen", False):
@@ -75,3 +76,12 @@ class Config:
 
 # 初始化加载配置
 Config.load_settings()
+
+def log(msg: str):
+    try:
+        ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        path = os.path.join(BASE_DIR, 'app.log')
+        with open(path, 'a', encoding='utf-8') as f:
+            f.write(f"[{ts}] {msg}\n")
+    except Exception:
+        pass

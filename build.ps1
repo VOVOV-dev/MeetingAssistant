@@ -32,4 +32,13 @@ $baseArgs += @(
     '--collect-all', 'dashscope'
 )
 
+# Ensure imageio and its ffmpeg plugin metadata and data are included
+$baseArgs += @(
+    '--collect-data', 'imageio',
+    '--collect-data', 'imageio',
+    '--collect-data', 'imageio_ffmpeg',
+    '--copy-metadata', 'imageio',
+    '--copy-metadata', 'imageio-ffmpeg'
+)
+
 python -m PyInstaller @baseArgs

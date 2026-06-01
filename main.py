@@ -1,5 +1,14 @@
 import sys
-from PyQt6.QtWidgets import QApplication
+
+try:
+    from PyQt6.QtWidgets import QApplication
+except ModuleNotFoundError:
+    print(
+        'PyQt6 is not installed in this Python environment. '
+        'Use the packaged release in release/dist, or install the project dependencies first.'
+    )
+    sys.exit(1)
+
 from src.ui.main_window import MainWindow
 
 def main():
@@ -10,6 +19,11 @@ def main():
     
     window = MainWindow()
     window.show()
+    try:
+        from src.config import log
+        log('Application started')
+    except Exception:
+        pass
     
     sys.exit(app.exec())
 

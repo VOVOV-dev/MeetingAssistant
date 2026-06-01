@@ -5,5 +5,7 @@ PyQt6-WebEngine-Qt6
 dashscope
 openai
 moviepy
+imageio
+imageio-ffmpeg
 python-dotenv
 markdown

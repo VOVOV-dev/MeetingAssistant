@@ -5,11 +5,17 @@ from datetime import datetime
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QLabel, QFileDialog, QTextEdit, QSplitter,
                              QListWidget, QListWidgetItem, QMenu, QInputDialog, QMessageBox,
-                             QTabWidget, QStyle, QSlider)
-from PyQt6.QtWebEngineWidgets import QWebEngineView
+                             QTabWidget, QStyle, QSlider, QTextBrowser)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QUrl
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
+
+try:
+    from PyQt6.QtWebEngineWidgets import QWebEngineView
+    WEBENGINE_AVAILABLE = True
+except Exception:
+    QWebEngineView = None
+    WEBENGINE_AVAILABLE = False
 
 from src.config import Config
 from src.utils.media import extract_audio
@@ -28,6 +34,8 @@ class WorkerThread(QThread):
 
     def run(self):
         try:
+            from src.config import log
+            log(f"WorkerThread started for: {self.file_path}")
             Config.ensure_temp_dir()
             
             # Step 1: Media Processing
@@ -60,6 +68,11 @@ class WorkerThread(QThread):
             self.finished.emit(title, summary)
             
         except Exception as e:
+            try:
+                from src.config import log
+                log(f"WorkerThread error: {e}")
+            except Exception:
+                pass
             self.error.emit(str(e))
             
     def _emit_progress(self, msg: str):
@@ -80,6 +93,11 @@ class MainWindow(QMainWindow):
         self.video_widget = None
         
         self._init_ui()
+        try:
+            from src.config import log
+            log('MainWindow initialized')
+        except Exception:
+            pass
         self.refresh_minutes_list()
         
     def _init_ui(self):
@@ -139,8 +157,13 @@ class MainWindow(QMainWindow):
         self.log_view.setPlaceholderText("系统运行日志将展示在这里...")
         summary_splitter.addWidget(self.log_view)
         
-        self.web_view = QWebEngineView()
-        self.web_view.setHtml(self.get_html_template("# 会议纪要\n等待生成或在左侧选择历史纪要..."))
+        if WEBENGINE_AVAILABLE:
+            self.web_view = QWebEngineView()
+            self.web_view.setHtml(self.get_html_template("# 会议纪要\n等待生成或在左侧选择历史纪要..."))
+        else:
+            self.web_view = QTextBrowser()
+            self.web_view.setHtml(self.get_html_template("# 会议纪要\n等待生成或在左侧选择历史纪要..."))
+            self.web_view.setOpenExternalLinks(True)
         summary_splitter.addWidget(self.web_view)
         
         summary_splitter.setStretchFactor(0, 1)
